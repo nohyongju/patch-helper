@@ -1,0 +1,38 @@
+# 패치가이드 - {{ repo }} {{ from_ref }} → {{ to_ref }}
+> 생성일: {{ generated_date }}
+
+---
+
+{% if summary_counts.db > 0 or summary_counts.es > 0 or summary_counts.config > 0 or summary_counts.init_data > 0 or summary_counts.initial_data > 0 %}
+## 변경 요약
+
+| 카테고리 | 변경 건수 |
+|---------|----------|
+{% if summary_counts.db > 0 %}| 🗄️ DB 변경 | {{ summary_counts.db }}건 |
+{% endif %}
+{% if summary_counts.es > 0 %}| 🔍 ES 변경 | {{ summary_counts.es }}건 |
+{% endif %}
+{% if summary_counts.config > 0 %}| ⚙️ 설정 변경 | {{ summary_counts.config }}건 |
+{% endif %}
+{% if summary_counts.init_data > 0 %}| 📦 Init Data | {{ summary_counts.init_data }}건 |
+{% endif %}
+{% if summary_counts.initial_data > 0 %}| 📦 초기 데이터 | {{ summary_counts.initial_data }}건 |
+{% endif %}
+
+---
+{% endif %}
+
+{% for analysis in analyses %}
+## {{ analysis.category }}
+
+{{ analysis.content }}
+
+---
+
+{% endfor %}
+
+{% if summary %}
+## 종합
+
+{{ summary }}
+{% endif %}
