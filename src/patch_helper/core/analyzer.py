@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 from openai import OpenAI
 
@@ -104,32 +107,60 @@ class Analyzer:
         ]
 
     def _analyze_db(self, repo: str, changes: list[FileChange]) -> AnalysisResult:
-        sys_prompt, user_prompt = db_analysis.build_prompt(
-            repo, self._changes_to_dicts(changes)
-        )
-        content = self._call_openai(sys_prompt, user_prompt)
+        # 파일별 개별 분석 후 결과 합산
+        all_contents: list[str] = []
+        all_mysql_ddl: list[str] = []
+        all_oracle_ddl: list[str] = []
 
-        # 응답에서 MySQL/Oracle DDL 블록 추출
-        mysql_ddl = self._extract_sql_block(content, "MySQL DDL")
-        oracle_ddl = self._extract_sql_block(content, "Oracle DDL")
+        for change in changes:
+            logger.info(f"  DB 분석 중: {change.filename}")
+            sys_prompt, user_prompt = db_analysis.build_prompt(
+                repo, self._changes_to_dicts([change])
+            )
+            content = self._call_openai(sys_prompt, user_prompt)
+
+            all_contents.append(content)
+
+            mysql_ddl = self._extract_sql_block(content, "MySQL DDL")
+            oracle_ddl = self._extract_sql_block(content, "Oracle DDL")
+            if mysql_ddl:
+                all_mysql_ddl.append(mysql_ddl)
+            if oracle_ddl:
+                all_oracle_ddl.append(oracle_ddl)
+
+        combined_content = "\n\n---\n\n".join(all_contents)
 
         return AnalysisResult(
             category="DB 변경",
-            content=content,
-            mysql_ddl=mysql_ddl,
-            oracle_ddl=oracle_ddl,
+            content=combined_content,
+            mysql_ddl="\n\n".join(all_mysql_ddl),
+            oracle_ddl="\n\n".join(all_oracle_ddl),
         )
 
     def _analyze_es(self, repo: str, changes: list[FileChange]) -> AnalysisResult:
-        sys_prompt, user_prompt = es_analysis.build_prompt(
-            repo, self._changes_to_dicts(changes)
-        )
-        content = self._call_openai(sys_prompt, user_prompt)
+        # 파일별 개별 분석 후 결과 합산
+        all_contents: list[str] = []
+        all_es_commands: list[str] = []
+
+        for change in changes:
+            logger.info(f"  ES 분석 중: {change.filename}")
+            sys_prompt, user_prompt = es_analysis.build_prompt(
+                repo, self._changes_to_dicts([change])
+            )
+            content = self._call_openai(sys_prompt, user_prompt)
+
+            all_contents.append(content)
+
+            es_commands = self._extract_code_block(content)
+            if es_commands:
+                all_es_commands.append(es_commands)
+
+        combined_content = "\n\n---\n\n".join(all_contents)
 
         return AnalysisResult(
             category="ES 변경",
-            content=content,
-            es_commands=self._extract_code_block(content),
+            content=combined_content,
+            es_commands="\n\n".join(all_es_commands),
         )
 
     def _analyze_config(self, repo: str, changes: list[FileChange]) -> AnalysisResult:

@@ -99,14 +99,28 @@ def register_views(app: App):
             thread_ts=thread_ts,
         )
 
-    # --- 태그/날짜 입력 처리 (스레드 메시지) ---
+    # --- 메시지 통합 핸들러 (스레드 입력 + DM) ---
     @app.event("message")
-    def handle_thread_message(event, say, client):
-        """스레드 내 메시지를 처리하여 태그/날짜 입력을 받는다."""
+    def handle_message(event, say, client):
+        """스레드 내 태그/날짜 입력 및 DM 메시지를 처리한다."""
         if event.get("bot_id"):
             return
 
         thread_ts = event.get("thread_ts")
+
+        # DM에서 새 메시지 (스레드가 아닌 경우)
+        if not thread_ts and event.get("channel_type") == "im":
+            text = event.get("text", "").lower()
+            if "생성" in text or "패치" in text or "가이드" in text:
+                from patch_helper.bot.commands import _show_service_selection
+                _show_service_selection(say, event.get("ts"))
+            else:
+                say(
+                    text="패치가이드를 생성하려면 `생성해줘` 라고 말씀해주세요.",
+                    thread_ts=event.get("ts"),
+                )
+            return
+
         if not thread_ts:
             return
 
@@ -121,8 +135,8 @@ def register_views(app: App):
 
         mode = session["mode"]
 
-        # 이미 ref가 설정되어 있으면 무시 (중복 처리 방지)
-        if "from_ref" in session:
+        # 이미 출력 방식까지 선택 완료된 세션이면 무시
+        if "output" in session:
             return
 
         if mode == "tag":
@@ -140,6 +154,12 @@ def register_views(app: App):
         elif mode == "date":
             parts = text.split()
             if len(parts) >= 3:
+                if not _is_valid_date(parts[1]) or not _is_valid_date(parts[2]):
+                    say(
+                        text="날짜 형식이 올바르지 않습니다. `YYYY-MM-DD` 형식으로 입력해주세요.\n예: `develop 2026-04-01 2026-04-25`",
+                        thread_ts=thread_ts,
+                    )
+                    return
                 session["branch"] = parts[0]
                 session["from_ref"] = parts[1]
                 session["to_ref"] = parts[2]
@@ -249,6 +269,16 @@ def register_views(app: App):
             say(text="세션이 만료되었습니다. 다시 생성해주세요.", thread_ts=thread_ts)
 
 
+def _is_valid_date(value: str) -> bool:
+    """YYYY-MM-DD 형식인지 검증한다."""
+    from datetime import datetime
+    try:
+        datetime.fromisoformat(value)
+        return True
+    except ValueError:
+        return False
+
+
 def _show_output_selection(say, thread_ts: str):
     blocks = [
         {
@@ -324,6 +354,9 @@ def _run_generation(session: dict, channel: str, thread_ts: str):
 
         # 세션에 가이드 저장 (상세 보기/저장 버튼용)
         session["guide"] = guide
+        # guide의 ref가 변환될 수 있으므로 세션도 동기화
+        session["from_ref"] = guide.from_ref
+        session["to_ref"] = guide.to_ref
 
         # Step 5: 결과 전달
         publisher.publish_summary(channel, classified, guide, thread_ts)

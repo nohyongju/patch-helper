@@ -21,10 +21,17 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str = ""
-    openai_model: str = "gpt-4o"
+    openai_model: str = "gpt-4o-mini"
+
+    # 서비스 repo 목록 (쉼표 구분)
+    service_repos: str = "dworks-cstalk,bizasset,aibiz,dworks-common-resource,dworks-common-initial"
 
     # 결과 저장 repo
     patch_guides_repo: str = ""
+
+    @property
+    def service_repo_list(self) -> list[str]:
+        return [r.strip() for r in self.service_repos.split(",") if r.strip()]
 
     @property
     def github_org_prefix(self) -> str:

@@ -7,16 +7,9 @@ import re
 
 from slack_bolt import App
 
-logger = logging.getLogger(__name__)
+from patch_helper.config import settings
 
-# 서비스 목록 (필요에 따라 config로 이동 가능)
-SERVICE_REPOS = [
-    "dworks-cstalk",
-    "bizasset",
-    "aibiz",
-    "dworks-common-resource",
-    "dworks-common-initial",
-]
+logger = logging.getLogger(__name__)
 
 # 한 행에 표시할 버튼 수
 BUTTONS_PER_ROW = 3
@@ -39,31 +32,13 @@ def register_commands(app: App):
                 thread_ts=thread_ts,
             )
 
-    @app.event("message")
-    def handle_message(event, say, client):
-        """DM 메시지 처리."""
-        # bot 메시지 무시
-        if event.get("bot_id"):
-            return
-
-        channel_type = event.get("channel_type", "")
-        if channel_type == "im":
-            text = event.get("text", "").lower()
-            thread_ts = event.get("ts")
-
-            if "생성" in text or "패치" in text or "가이드" in text:
-                _show_service_selection(say, thread_ts)
-            else:
-                say(
-                    text="패치가이드를 생성하려면 `생성해줘` 라고 말씀해주세요.",
-                    thread_ts=thread_ts,
-                )
+    # DM 메시지는 views.py의 통합 message 핸들러에서 처리
 
 
 def _show_service_selection(say, thread_ts: str | None = None):
     """서비스 선택 버튼을 표시한다."""
     buttons = []
-    for repo in SERVICE_REPOS:
+    for repo in settings.service_repo_list:
         buttons.append({
             "type": "button",
             "text": {"type": "plain_text", "text": repo},
