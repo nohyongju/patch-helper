@@ -107,15 +107,29 @@ class Analyzer:
         ]
 
     def _analyze_db(self, repo: str, changes: list[FileChange]) -> AnalysisResult:
-        # 파일별 개별 분석 후 결과 합산
+        # Jpo와 JpoId를 묶어서 분석한다.
+        # 예: GroupTalkEventLogJpo.java + GroupTalkEventLogJpoId.java → 함께 전달
+        jpo_files: dict[str, list[FileChange]] = {}  # base_name → [Jpo, JpoId]
+
+        for change in changes:
+            basename = change.filename.split("/")[-1]
+            if basename.endswith("JpoId.java"):
+                # JpoId → 대응하는 Jpo의 그룹에 추가
+                base_name = basename.replace("JpoId.java", "Jpo")
+                jpo_files.setdefault(base_name, []).append(change)
+            elif basename.endswith("Jpo.java"):
+                base_name = basename.replace(".java", "")
+                jpo_files.setdefault(base_name, []).insert(0, change)
+
         all_contents: list[str] = []
         all_mysql_ddl: list[str] = []
         all_oracle_ddl: list[str] = []
 
-        for change in changes:
-            logger.info(f"  DB 분석 중: {change.filename}")
+        for base_name, group in jpo_files.items():
+            filenames = [c.filename for c in group]
+            logger.info(f"  DB 분석 중: {filenames}")
             sys_prompt, user_prompt = db_analysis.build_prompt(
-                repo, self._changes_to_dicts([change])
+                repo, self._changes_to_dicts(group)
             )
             content = self._call_openai(sys_prompt, user_prompt)
 
@@ -138,11 +152,21 @@ class Analyzer:
         )
 
     def _analyze_es(self, repo: str, changes: list[FileChange]) -> AnalysisResult:
+        # 신규 Doc.java(added)는 새 인덱스이므로 분석 제외
+        modified_changes = [c for c in changes if c.status != "added"]
+
+        if not modified_changes:
+            logger.info("  ES 변경: 신규 인덱스만 존재하여 분석 생략")
+            return AnalysisResult(
+                category="ES 변경",
+                content="신규 인덱스 추가만 존재하여 별도 ES 작업이 불필요합니다.",
+            )
+
         # 파일별 개별 분석 후 결과 합산
         all_contents: list[str] = []
         all_es_commands: list[str] = []
 
-        for change in changes:
+        for change in modified_changes:
             logger.info(f"  ES 분석 중: {change.filename}")
             sys_prompt, user_prompt = es_analysis.build_prompt(
                 repo, self._changes_to_dicts([change])

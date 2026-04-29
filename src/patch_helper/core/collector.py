@@ -110,6 +110,7 @@ class DiffCollector:
             to_ref=to_tag,
             files=files,
             total_commits=comparison.total_commits,
+            head_sha=comparison.commits[-1].sha if comparison.commits else to_tag,
         )
 
     def _collect_by_date(
@@ -173,6 +174,7 @@ class DiffCollector:
             to_ref=f"{branch}@{to_date}",
             files=files,
             total_commits=len(commits),
+            head_sha=head_sha,
         )
 
     def _supplement_missing_files(
@@ -289,3 +291,26 @@ class DiffCollector:
             tofile=f"b/{filename}",
         )
         return "".join(diff)
+
+    def get_file_content(self, repo_name: str, filepath: str, ref: str) -> str | None:
+        """특정 ref 시점의 파일 내용을 가져온다. 없으면 None."""
+        repo = self._get_repo(repo_name)
+        try:
+            content = repo.get_contents(filepath, ref=ref)
+            if not isinstance(content, list):
+                return content.decoded_content.decode("utf-8", errors="replace")
+        except Exception:
+            return None
+        return None
+
+    def find_file_in_tree(self, repo_name: str, filename: str, ref: str) -> str | None:
+        """ref 시점의 tree에서 파일명으로 검색하여 전체 경로를 반환한다. 없으면 None."""
+        repo = self._get_repo(repo_name)
+        try:
+            tree = repo.get_git_tree(ref, recursive=True)
+            for item in tree.tree:
+                if item.type == "blob" and item.path.endswith(filename):
+                    return item.path
+        except Exception:
+            return None
+        return None

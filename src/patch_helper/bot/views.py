@@ -9,7 +9,7 @@ import threading
 from slack_bolt import App
 
 from patch_helper.core.analyzer import Analyzer
-from patch_helper.core.classifier import classify
+from patch_helper.core.classifier import classify, supplement_jpo_id_files
 from patch_helper.core.collector import DiffCollector
 from patch_helper.core.generator import Generator
 from patch_helper.core.models import CompareMode, PatchGuide
@@ -335,6 +335,9 @@ def _run_generation(session: dict, channel: str, thread_ts: str):
 
         # Step 2: 파일 분류
         classified = classify(diff)
+
+        # Step 2.5: Jpo 파일에 대응하는 JpoId 파일 보강 (PK 정보 확보)
+        supplement_jpo_id_files(classified, collector, diff.head_sha)
 
         if not classified.has_changes:
             publisher.send_message(

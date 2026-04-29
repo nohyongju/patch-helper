@@ -10,7 +10,7 @@ from rich.panel import Panel
 from rich.markdown import Markdown
 
 from patch_helper.core.analyzer import Analyzer
-from patch_helper.core.classifier import classify
+from patch_helper.core.classifier import classify, supplement_jpo_id_files
 from patch_helper.core.collector import DiffCollector
 from patch_helper.core.generator import Generator
 from patch_helper.core.models import CompareMode
@@ -48,6 +48,9 @@ def generate(
     # Step 2: 파일 분류
     console.print("⏳ 파일 분류 중...")
     classified = classify(diff)
+
+    # Step 2.5: Jpo 파일에 대응하는 JpoId 파일 보강 (PK 정보 확보)
+    supplement_jpo_id_files(classified, collector, diff.head_sha)
 
     if not classified.has_changes:
         console.print("[yellow]패치가이드 대상 변경사항이 없습니다.[/yellow]")

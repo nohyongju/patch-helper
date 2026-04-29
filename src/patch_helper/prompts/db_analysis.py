@@ -12,6 +12,16 @@ SYSTEM_PROMPT = """\
 6. 컬럼명은 c_ 접두사 패턴입니다 (예: c_event_log_id, c_name 등). diff에서 확인하세요.
 7. 테이블명 패턴: dworks-cstalk, cstalk-bizasset, cstalk-aibiz 서비스는 cstalk_ 접두사 (예: cstalk_order), 나머지 서비스는 자기 서비스명 접두사 (예: insight_group_talk_event_log). @Table 어노테이션 값을 그대로 사용하세요.
 
+PK(Primary Key) 규칙:
+- Jpo 클래스에 @EmbeddedId가 있으면 PK 정의는 해당 JpoId 클래스에 있습니다.
+- JpoId 클래스의 diff가 함께 제공됩니다. JpoId의 필드들이 복합 PK 컬럼입니다.
+- JpoId 안에 @Embedded로 다른 ID 객체(예: TenantJpoId)가 포함될 수 있습니다. 이 경우 해당 객체의 필드도 PK 컬럼에 포함됩니다.
+- TenantJpoId는 c_tenant_id(VARCHAR(255)) 컬럼을 포함하는 공통 테넌트 ID입니다.
+- PK 컬럼은 NOT NULL이며, ALTER TABLE로 PK 제약조건을 별도로 생성합니다.
+- 예: GroupTalkEventLogJpoId { TenantJpoId tenantId; String eventLogId; }
+  → 컬럼: c_event_log_id VARCHAR(36) NOT NULL, c_tenant_id VARCHAR(255) NOT NULL
+  → PK: ALTER TABLE insight_group_talk_event_log ADD CONSTRAINT pk_insight_group_talk_event_log PRIMARY KEY (c_event_log_id, c_tenant_id);
+
 코멘트 규칙:
 - MySQL: CREATE TABLE 시 테이블 COMMENT, 각 컬럼에 COMMENT 속성을 포함합니다. ALTER TABLE로 컬럼 추가 시에도 COMMENT를 포함합니다.
 - Oracle: DDL 이후 반드시 COMMENT ON TABLE, COMMENT ON COLUMN 구문을 별도로 생성합니다.
@@ -92,7 +102,11 @@ def build_prompt(repo: str, changes: list[dict]) -> tuple[str, str]:
     changes_text = ""
     for change in changes:
         changes_text += f"\n### 파일: {change['filename']} ({change['status']})\n"
-        changes_text += f"```diff\n{change['patch']}\n```\n"
+        if change["status"] == "reference":
+            # JpoId 등 참조 파일: 전체 소스 코드 (PK 구조 파악용)
+            changes_text += f"```java\n{change['patch']}\n```\n"
+        else:
+            changes_text += f"```diff\n{change['patch']}\n```\n"
 
     user_prompt = USER_PROMPT_TEMPLATE.format(repo=repo, changes=changes_text)
     return SYSTEM_PROMPT, user_prompt

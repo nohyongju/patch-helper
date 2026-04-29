@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import logging
 
 from patch_helper.core.models import (
     ClassifiedChanges,
@@ -11,6 +12,8 @@ from patch_helper.core.models import (
     FileChange,
     RepoType,
 )
+
+logger = logging.getLogger(__name__)
 
 # 서비스 repo 분류 규칙
 SERVICE_PATTERNS: list[tuple[str, FileCategory]] = [
@@ -100,3 +103,69 @@ def classify(diff: DiffResult) -> ClassifiedChanges:
             result.initial_data_changes.append(file_change)
 
     return result
+
+
+def supplement_jpo_id_files(
+    classified: ClassifiedChanges,
+    collector,
+    head_ref: str,
+) -> None:
+    """db_changes의 Jpo 파일에 대응하는 JpoId 파일이 없으면 GitHub에서 가져와 추가한다.
+
+    Jpo 파일의 PK는 @EmbeddedId로 참조하는 JpoId 클래스에 정의되어 있다.
+    JpoId가 변경 목록에 없어도, Jpo 분석 시 PK 정보가 필요하므로
+    head 시점의 JpoId 파일 전체 내용을 가져와 db_changes에 함께 포함시킨다.
+    """
+    if not classified.db_changes:
+        return
+
+    existing_basenames = {
+        c.filename.split("/")[-1] for c in classified.db_changes
+    }
+
+    jpo_files = [
+        c for c in classified.db_changes
+        if c.filename.split("/")[-1].endswith("Jpo.java")
+        and not c.filename.split("/")[-1].endswith("JpoId.java")
+    ]
+
+    for jpo in jpo_files:
+        jpo_basename = jpo.filename.split("/")[-1]
+        jpo_id_basename = jpo_basename.replace("Jpo.java", "JpoId.java")
+
+        if jpo_id_basename in existing_basenames:
+            continue  # 이미 변경 목록에 있음
+
+        # JpoId 파일 경로 추정: 같은 디렉토리
+        jpo_dir = "/".join(jpo.filename.split("/")[:-1])
+        jpo_id_path = f"{jpo_dir}/{jpo_id_basename}" if jpo_dir else jpo_id_basename
+
+        # GitHub에서 head 시점의 파일 내용 조회
+        content = collector.get_file_content(
+            classified.repo, jpo_id_path, head_ref,
+        )
+
+        if content is None:
+            # 경로 추정 실패 시 tree에서 검색
+            found_path = collector.find_file_in_tree(
+                classified.repo, jpo_id_basename, head_ref,
+            )
+            if found_path:
+                content = collector.get_file_content(
+                    classified.repo, found_path, head_ref,
+                )
+                jpo_id_path = found_path
+
+        if content:
+            logger.info(f"  JpoId 보강: {jpo_id_path}")
+            # 전체 내용을 patch로 넣어 OpenAI가 PK 구조를 파악할 수 있게 한다
+            classified.db_changes.append(
+                FileChange(
+                    filename=jpo_id_path,
+                    status="reference",
+                    patch=content,
+                    category=FileCategory.DB_CHANGE,
+                )
+            )
+        else:
+            logger.warning(f"  JpoId 파일을 찾을 수 없음: {jpo_id_basename}")

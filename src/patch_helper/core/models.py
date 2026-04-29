@@ -50,6 +50,7 @@ class DiffResult:
     to_ref: str
     files: list[FileChange] = field(default_factory=list)
     total_commits: int = 0
+    head_sha: str = ""  # head 시점의 commit SHA (파일 내용 조회에 사용)
 
 
 @dataclass
