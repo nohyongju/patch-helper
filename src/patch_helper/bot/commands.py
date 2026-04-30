@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 
 from slack_bolt import App
 
@@ -11,8 +10,10 @@ from patch_helper.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 한 행에 표시할 버튼 수
-BUTTONS_PER_ROW = 3
+# 체크박스 블록 식별용 (views.py에서 state.values 조회 시 사용)
+SERVICE_CHECKBOXES_BLOCK_ID = "service_checkboxes_block"
+SERVICE_CHECKBOXES_ACTION_ID = "service_checkboxes"
+SERVICE_SELECT_DONE_ACTION_ID = "service_select_done"
 
 
 def register_commands(app: App):
@@ -36,33 +37,45 @@ def register_commands(app: App):
 
 
 def _show_service_selection(say, thread_ts: str | None = None):
-    """서비스 선택 버튼을 표시한다."""
-    buttons = []
-    for repo in settings.service_repo_list:
-        buttons.append({
-            "type": "button",
+    """서비스 선택 체크박스(다중 선택) + 다음 버튼을 표시한다."""
+    options = [
+        {
             "text": {"type": "plain_text", "text": repo},
-            "action_id": f"select_service_{repo}",
             "value": repo,
-        })
-
-    # 버튼을 행별로 나누기
-    action_blocks = []
-    for i in range(0, len(buttons), BUTTONS_PER_ROW):
-        action_blocks.append({
-            "type": "actions",
-            "elements": buttons[i : i + BUTTONS_PER_ROW],
-        })
+        }
+        for repo in settings.service_repo_list
+    ]
 
     blocks = [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": "서비스를 선택해주세요.",
+                "text": "패치가이드를 생성할 서비스를 선택해주세요. *(다중 선택 가능)*",
             },
         },
-        *action_blocks,
+        {
+            "type": "actions",
+            "block_id": SERVICE_CHECKBOXES_BLOCK_ID,
+            "elements": [
+                {
+                    "type": "checkboxes",
+                    "action_id": SERVICE_CHECKBOXES_ACTION_ID,
+                    "options": options,
+                }
+            ],
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "다음 ▶"},
+                    "action_id": SERVICE_SELECT_DONE_ACTION_ID,
+                    "style": "primary",
+                }
+            ],
+        },
     ]
 
     say(blocks=blocks, text="서비스를 선택해주세요.", thread_ts=thread_ts)

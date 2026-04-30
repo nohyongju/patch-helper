@@ -66,13 +66,6 @@ class SlackPublisher:
                         "action_id": "patch_guide_detail",
                         "value": f"{guide.repo}|{guide.from_ref}|{guide.to_ref}",
                     },
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "💾 repo에 저장"},
-                        "action_id": "patch_guide_save",
-                        "value": f"{guide.repo}|{guide.from_ref}|{guide.to_ref}",
-                        "style": "primary",
-                    },
                 ],
             },
         ]

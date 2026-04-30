@@ -40,7 +40,7 @@ USER_PROMPT_TEMPLATE = """\
 (파일별 변경 내용 설명)
 
 ## curl 스크립트
-컨테이너별로 별도의 bash 블록을 작성합니다. 각 블록 앞에 `### container: {컨테이너명}` 헤더를 붙입니다.
+컨테이너별로 별도의 bash 블록을 작성합니다. 각 블록 앞에 `### container: {{컨테이너명}}` 헤더를 붙입니다.
 
 ### container: scheduler
 ```bash

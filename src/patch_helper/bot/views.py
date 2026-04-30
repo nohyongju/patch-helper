@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import logging
-import re
 import threading
 
 from slack_bolt import App
 
+from patch_helper.bot.commands import (
+    SERVICE_CHECKBOXES_ACTION_ID,
+    SERVICE_CHECKBOXES_BLOCK_ID,
+    SERVICE_SELECT_DONE_ACTION_ID,
+)
 from patch_helper.core.analyzer import Analyzer
 from patch_helper.core.classifier import classify, supplement_jpo_id_files
 from patch_helper.core.collector import DiffCollector
@@ -19,32 +23,53 @@ from patch_helper.publisher.slack_publisher import SlackPublisher
 logger = logging.getLogger(__name__)
 
 # 세션 상태를 임시 저장 (실제 운영에서는 Redis 등 사용 권장)
+# 세션 스키마:
+#   repos: list[str]                   — 선택된 서비스 repo 목록
+#   mode: "tag" | "date"
+#   from_ref, to_ref: str              — 모든 repos에 일괄 적용
+#   branch: str | None                 — date 모드 전용
+#   output: "slack" | "github"
+#   guides: dict[repo, PatchGuide]     — repo별 생성 결과
 _sessions: dict[str, dict] = {}
 
 
 def register_views(app: App):
     """버튼 인터랙션 핸들러를 등록한다."""
 
-    # --- 서비스 선택 ---
-    @app.action(re.compile(r"^select_service_(.+)$"))
-    def handle_service_select(ack, action, body, say):
+    # --- 서비스 선택 (체크박스 변경 시 ack만 처리) ---
+    @app.action(SERVICE_CHECKBOXES_ACTION_ID)
+    def handle_service_checkboxes(ack):
         ack()
-        repo = action["value"]
+
+    # --- 서비스 선택 완료 (다음 버튼) ---
+    @app.action(SERVICE_SELECT_DONE_ACTION_ID)
+    def handle_service_select_done(ack, body, say):
+        ack()
         thread_ts = _get_thread_ts(body)
-        channel = body["channel"]["id"]
         user = body["user"]["id"]
 
-        # 세션 저장
-        session_key = f"{user}_{thread_ts}"
-        _sessions[session_key] = {"repo": repo}
+        repos = _extract_selected_repos(body)
+        if not repos:
+            say(
+                text="⚠️ 서비스를 1개 이상 선택해주세요.",
+                thread_ts=thread_ts,
+            )
+            return
 
-        # 비교 방식 선택
+        # 세션 저장 (다중 repo)
+        session_key = f"{user}_{thread_ts}"
+        _sessions[session_key] = {"repos": repos}
+
+        repos_list = "\n".join(f"• `{r}`" for r in repos)
         blocks = [
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*{repo}* 선택됨.\n비교 방식을 선택해주세요.",
+                    "text": (
+                        f"*선택된 서비스 ({len(repos)}개):*\n{repos_list}\n\n"
+                        "비교 방식을 선택해주세요. (모든 서비스에 동일하게 적용됩니다)"
+                    ),
                 },
             },
             {
@@ -185,8 +210,12 @@ def register_views(app: App):
             return
 
         session["output"] = "slack"
+        repos = session.get("repos") or []
         say(
-            text=f"⏳ {session['repo']} ({session['from_ref']} → {session['to_ref']}) 패치가이드 생성 중...",
+            text=(
+                f"⏳ {len(repos)}개 서비스 패치가이드 생성 중...\n"
+                f"({session['from_ref']} → {session['to_ref']})"
+            ),
             thread_ts=thread_ts,
         )
 
@@ -211,8 +240,12 @@ def register_views(app: App):
             return
 
         session["output"] = "github"
+        repos = session.get("repos") or []
         say(
-            text=f"⏳ {session['repo']} ({session['from_ref']} → {session['to_ref']}) 패치가이드 생성 + PR 생성 중...",
+            text=(
+                f"⏳ {len(repos)}개 서비스 패치가이드 생성 + PR 생성 중...\n"
+                f"({session['from_ref']} → {session['to_ref']})"
+            ),
             thread_ts=thread_ts,
         )
 
@@ -231,40 +264,66 @@ def register_views(app: App):
         value = body["actions"][0]["value"]
 
         repo, from_ref, to_ref = value.split("|")
-        session_key = _find_session_by_refs(repo, from_ref, to_ref)
+        guide = _find_guide(repo, from_ref, to_ref)
 
-        if session_key and "guide" in _sessions.get(session_key, {}):
-            guide = _sessions[session_key]["guide"]
+        if guide is not None:
             publisher = SlackPublisher()
             publisher.publish_detail(channel, guide, thread_ts)
         else:
             say(text="세션이 만료되었습니다. 다시 생성해주세요.", thread_ts=thread_ts)
 
-    # --- repo에 저장 버튼 ---
+    # --- 모두 저장 버튼 (모든 서비스를 단일 PR로 통합 생성) ---
+    @app.action("patch_guide_save_all")
+    def handle_save_all(ack, body, say):
+        ack()
+        thread_ts = _get_thread_ts(body)
+        session_key = body["actions"][0]["value"]
+
+        session = _sessions.get(session_key)
+        guides = (session or {}).get("guides") or {}
+        if not guides:
+            say(text="세션이 만료되었습니다. 다시 생성해주세요.", thread_ts=thread_ts)
+            return
+
+        say(
+            text=f"💾 {len(guides)}개 서비스를 단일 PR로 묶어 생성합니다...",
+            thread_ts=thread_ts,
+        )
+
+        try:
+            gh_publisher = GitHubPublisher()
+            pr_url = gh_publisher.publish_batch(list(guides.values()))
+            say(
+                text=f"✅ 단일 PR 생성 완료 ({len(guides)}개 서비스 통합)\n📎 {pr_url}",
+                thread_ts=thread_ts,
+            )
+        except Exception as e:
+            logger.exception("일괄 PR 생성 실패")
+            say(text=f"❌ 일괄 PR 생성 실패: {e}", thread_ts=thread_ts)
+
+    # --- repo에 저장 버튼 (단일 — 호환용, 이전 메시지의 버튼 클릭 대응) ---
     @app.action("patch_guide_save")
     def handle_save(ack, body, say):
         ack()
         thread_ts = _get_thread_ts(body)
-        channel = body["channel"]["id"]
         value = body["actions"][0]["value"]
 
         repo, from_ref, to_ref = value.split("|")
-        session_key = _find_session_by_refs(repo, from_ref, to_ref)
+        guide = _find_guide(repo, from_ref, to_ref)
 
-        if session_key and "guide" in _sessions.get(session_key, {}):
-            guide = _sessions[session_key]["guide"]
-            say(text="💾 repo에 저장 중...", thread_ts=thread_ts)
+        if guide is not None:
+            say(text=f"💾 *{repo}* repo에 저장 중...", thread_ts=thread_ts)
 
             try:
                 gh_publisher = GitHubPublisher()
                 pr_url = gh_publisher.publish(guide)
                 say(
-                    text=f"✅ PR 생성 완료\n📎 {pr_url}",
+                    text=f"✅ *{repo}* PR 생성 완료\n📎 {pr_url}",
                     thread_ts=thread_ts,
                 )
             except Exception as e:
                 logger.exception("PR 생성 실패")
-                say(text=f"❌ PR 생성 실패: {e}", thread_ts=thread_ts)
+                say(text=f"❌ *{repo}* PR 생성 실패: {e}", thread_ts=thread_ts)
         else:
             say(text="세션이 만료되었습니다. 다시 생성해주세요.", thread_ts=thread_ts)
 
@@ -311,76 +370,110 @@ def _show_output_selection(say, thread_ts: str):
 
 
 def _run_generation(session: dict, channel: str, thread_ts: str):
-    """백그라운드에서 패치가이드를 생성한다."""
+    """백그라운드에서 선택된 모든 서비스의 패치가이드를 순차 생성한다.
+
+    한 서비스가 실패해도 나머지 서비스는 계속 처리한다.
+    """
     publisher = SlackPublisher()
+    repos: list[str] = session.get("repos") or []
+    mode = CompareMode(session["mode"])
+    from_ref = session["from_ref"]
+    to_ref = session["to_ref"]
+    branch = session.get("branch")
+    output = session.get("output", "slack")
 
-    try:
-        repo = session["repo"]
-        mode = CompareMode(session["mode"])
-        from_ref = session["from_ref"]
-        to_ref = session["to_ref"]
-        branch = session.get("branch")
+    session.setdefault("guides", {})
 
-        # Step 1: diff 수집
-        collector = DiffCollector()
-        diff = collector.collect(repo, mode, from_ref, to_ref, branch)
+    success_count = 0
+    fail_count = 0
+    skip_count = 0
 
-        if not diff.files:
+    for idx, repo in enumerate(repos, start=1):
+        prefix = f"[{idx}/{len(repos)}] *{repo}*"
+        try:
+            publisher.send_message(channel, f"▶️ {prefix} 시작", thread_ts)
+
+            collector = DiffCollector()
+            diff = collector.collect(repo, mode, from_ref, to_ref, branch)
+
+            if not diff.files:
+                publisher.send_message(
+                    channel,
+                    f"⏭️ {prefix} 변경사항이 없어 건너뜁니다.",
+                    thread_ts,
+                )
+                skip_count += 1
+                continue
+
+            classified = classify(diff)
+            supplement_jpo_id_files(classified, collector, diff.head_sha)
+
+            if not classified.has_changes:
+                publisher.send_message(
+                    channel,
+                    f"⏭️ {prefix} 패치가이드 대상 변경사항이 없어 건너뜁니다. "
+                    f"(변경 파일 {len(diff.files)}개 중 패치 대상 0개)",
+                    thread_ts,
+                )
+                skip_count += 1
+                continue
+
+            analyzer = Analyzer()
+            guide = analyzer.analyze(classified)
+
+            generator = Generator()
+            guide = generator.generate(classified, guide)
+
+            # 가이드 저장 (상세 보기/저장 버튼이 조회)
+            session["guides"][repo] = guide
+
+            # 결과 요약 + 버튼 (개별 PR은 만들지 않음 — 마지막에 일괄 처리)
+            publisher.publish_summary(channel, classified, guide, thread_ts)
+
+            success_count += 1
+
+        except Exception as e:
+            logger.exception("%s 패치가이드 생성 실패", repo)
             publisher.send_message(
                 channel,
-                f"ℹ️ {repo} ({from_ref} → {to_ref}) 변경사항이 없습니다.",
+                f"❌ {prefix} 생성 실패: {e}",
                 thread_ts,
             )
-            return
+            fail_count += 1
 
-        # Step 2: 파일 분류
-        classified = classify(diff)
+    # 최종 요약
+    publisher.send_message(
+        channel,
+        (
+            f"🏁 전체 완료 — 성공 {success_count}, 실패 {fail_count}, "
+            f"건너뜀 {skip_count} / 총 {len(repos)}"
+        ),
+        thread_ts,
+    )
 
-        # Step 2.5: Jpo 파일에 대응하는 JpoId 파일 보강 (PK 정보 확보)
-        supplement_jpo_id_files(classified, collector, diff.head_sha)
+    guides = session.get("guides") or {}
 
-        if not classified.has_changes:
-            publisher.send_message(
-                channel,
-                f"ℹ️ {repo} ({from_ref} → {to_ref}) 패치가이드 대상 변경사항이 없습니다.\n(변경 파일 {len(diff.files)}개 중 패치 대상 0개)",
-                thread_ts,
-            )
-            return
-
-        # Step 3: AI 분석
-        analyzer = Analyzer()
-        guide = analyzer.analyze(classified)
-
-        # Step 4: 문서 생성
-        generator = Generator()
-        guide = generator.generate(classified, guide)
-
-        # 세션에 가이드 저장 (상세 보기/저장 버튼용)
-        session["guide"] = guide
-        # guide의 ref가 변환될 수 있으므로 세션도 동기화
-        session["from_ref"] = guide.from_ref
-        session["to_ref"] = guide.to_ref
-
-        # Step 5: 결과 전달
-        publisher.publish_summary(channel, classified, guide, thread_ts)
-
-        # github 모드면 자동으로 PR도 생성
-        if session.get("output") == "github":
+    # github 모드: 모든 성공한 가이드를 단일 PR로 일괄 생성
+    if output == "github" and guides:
+        try:
             gh_publisher = GitHubPublisher()
-            pr_url = gh_publisher.publish(guide)
+            pr_url = gh_publisher.publish_batch(list(guides.values()))
             publisher.send_message(
                 channel,
-                f"✅ PR 생성 완료\n📎 {pr_url}",
+                f"✅ 단일 PR 생성 완료 ({len(guides)}개 서비스 통합)\n📎 {pr_url}",
+                thread_ts,
+            )
+        except Exception as e:
+            logger.exception("일괄 PR 생성 실패")
+            publisher.send_message(
+                channel,
+                f"❌ 일괄 PR 생성 실패: {e}",
                 thread_ts,
             )
 
-    except Exception as e:
-        logger.exception("패치가이드 생성 실패")
-        publisher.send_message(
-            channel,
-            f"❌ 패치가이드 생성 실패: {e}",
-            thread_ts,
-        )
+    # slack 모드: '모두 저장' 버튼 게시 (사용자가 누르면 단일 PR 생성)
+    elif output == "slack" and guides:
+        _post_save_all_button(publisher, channel, thread_ts, session)
 
 
 def _get_thread_ts(body: dict) -> str:
@@ -389,13 +482,70 @@ def _get_thread_ts(body: dict) -> str:
     return message.get("thread_ts") or message.get("ts", "")
 
 
-def _find_session_by_refs(repo: str, from_ref: str, to_ref: str) -> str | None:
-    """repo/ref로 세션을 찾는다."""
-    for key, session in _sessions.items():
-        if (
-            session.get("repo") == repo
-            and session.get("from_ref") == from_ref
-            and session.get("to_ref") == to_ref
-        ):
-            return key
+def _post_save_all_button(
+    publisher: SlackPublisher, channel: str, thread_ts: str, session: dict
+) -> None:
+    """다중 서비스 가이드 생성 후 '모두 저장' 버튼을 thread에 게시한다."""
+    # session → session_key 역조회 (버튼 value로 사용)
+    session_key = next(
+        (k for k, v in _sessions.items() if v is session),
+        None,
+    )
+    if session_key is None:
+        return
+    guides = session.get("guides") or {}
+    repos_text = ", ".join(f"`{r}`" for r in guides.keys())
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*{len(guides)}개 가이드*가 준비되었습니다: {repos_text}\n"
+                    "아래 버튼을 누르면 모든 서비스의 PR을 일괄 생성합니다."
+                ),
+            },
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "📦 모두 저장 (일괄 PR)"},
+                    "action_id": "patch_guide_save_all",
+                    "value": session_key,
+                    "style": "primary",
+                }
+            ],
+        },
+    ]
+    publisher._client.chat_postMessage(
+        channel=channel,
+        blocks=blocks,
+        text="모두 저장",
+        thread_ts=thread_ts,
+    )
+
+
+def _extract_selected_repos(body: dict) -> list[str]:
+    """다음 버튼 클릭 body에서 체크된 서비스 repo 목록을 추출한다."""
+    state = body.get("state") or {}
+    values = state.get("values") or {}
+    block = values.get(SERVICE_CHECKBOXES_BLOCK_ID) or {}
+    action = block.get(SERVICE_CHECKBOXES_ACTION_ID) or {}
+    selected = action.get("selected_options") or []
+    return [opt.get("value") for opt in selected if opt.get("value")]
+
+
+def _find_guide(repo: str, from_ref: str, to_ref: str) -> PatchGuide | None:
+    """다중 세션 중 repo/ref에 매칭되는 가이드를 찾는다.
+
+    버튼 value의 ref는 guide.from_ref/to_ref(`branch@YYYY-MM-DD` 등 collector가
+    가공한 형태) 기준이므로, 세션 입력 ref가 아니라 guide 자체의 ref와 매칭한다.
+    """
+    for session in _sessions.values():
+        guides = session.get("guides") or {}
+        guide = guides.get(repo)
+        if guide and guide.from_ref == from_ref and guide.to_ref == to_ref:
+            return guide
     return None
