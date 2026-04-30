@@ -1,5 +1,31 @@
-# 패치가이드 - {{ repo }} {{ from_ref }} → {{ to_ref }}
+# {{ from_ref }} to {{ to_ref }} Patch Guide
+
+> 대상 repo: `{{ repo }}`
 > 생성일: {{ generated_date }}
+
+가이드에 따라 패치를 진행하세요.
+
+## 주요 항목
+
+{% if summary %}
+{{ summary }}
+{% else %}
+### 신규
+- (자동 분석된 신규 항목이 없습니다.)
+
+### 개선 및 버그 수정
+- (자동 분석된 개선 항목이 없습니다.)
+{% endif %}
+
+---
+
+## 패치 대상 컨테이너
+
+> ⚠️ 아래 표는 자동 생성되지 않습니다. 실제 배포할 컨테이너/버전/jar 정보를 직접 채워주세요.
+
+| 분류        | container  | version | jar                             |
+|------------|------------|---------|---------------------------------|
+|            |            |         |                                 |
 
 ---
 
@@ -8,31 +34,66 @@
 
 | 카테고리 | 변경 건수 |
 |---------|----------|
-{% if summary_counts.db > 0 %}| 🗄️ DB 변경 | {{ summary_counts.db }}건 |
+{% if summary_counts.db > 0 %}| DB 변경 | {{ summary_counts.db }}건 |
 {% endif %}
-{% if summary_counts.es > 0 %}| 🔍 ES 변경 | {{ summary_counts.es }}건 |
+{% if summary_counts.es > 0 %}| ES 변경 | {{ summary_counts.es }}건 |
 {% endif %}
-{% if summary_counts.config > 0 %}| ⚙️ 설정 변경 | {{ summary_counts.config }}건 |
+{% if summary_counts.config > 0 %}| 설정 변경 | {{ summary_counts.config }}건 |
 {% endif %}
-{% if summary_counts.init_data > 0 %}| 📦 Init Data | {{ summary_counts.init_data }}건 |
+{% if summary_counts.init_data > 0 %}| Init Data | {{ summary_counts.init_data }}건 |
 {% endif %}
-{% if summary_counts.initial_data > 0 %}| 📦 초기 데이터 | {{ summary_counts.initial_data }}건 |
+{% if summary_counts.initial_data > 0 %}| 초기 데이터 | {{ summary_counts.initial_data }}건 |
 {% endif %}
 
 ---
 {% endif %}
 
 {% for analysis in analyses %}
+{% if analysis.category == "DB 변경" %}
+## DB 변경사항
+
+> `./script/DB/patch-mysql.sql`, `./script/DB/patch-oracle.sql` 스크립트를 참고하세요.
+
+{{ analysis.content }}
+
+---
+
+{% elif analysis.category == "ES 변경" %}
+## Elasticsearch 변경사항
+
+{{ analysis.content }}
+
+---
+
+{% elif analysis.category == "설정 변경" %}
+## 설정 변경사항
+
+{{ analysis.content }}
+
+---
+
+{% elif analysis.category == "Init Data" %}
+## Init Data 변경사항
+
+{{ analysis.content }}
+
+---
+
+{% elif analysis.category == "초기 데이터" %}
+## 초기 데이터 변경사항
+
+> `./script/API/*.http.sh` 스크립트를 참고하세요.
+
+{{ analysis.content }}
+
+---
+
+{% else %}
 ## {{ analysis.category }}
 
 {{ analysis.content }}
 
 ---
 
-{% endfor %}
-
-{% if summary %}
-## 종합
-
-{{ summary }}
 {% endif %}
+{% endfor %}

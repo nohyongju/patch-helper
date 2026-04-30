@@ -31,13 +31,42 @@ class GitHubPublisher:
         repo_name = target_repo or settings.patch_guides_repo
         repo = self._github.get_repo(repo_name)
 
-        # 브랜치명 생성
-        service_name = guide.repo.split("/")[-1] if "/" in guide.repo else guide.repo
-        ref_safe = guide.to_ref.replace("/", "-").replace("@", "_")
-        branch_name = f"patch-guide/{service_name}/{ref_safe}"
-        folder_path = f"{service_name}/{guide.from_ref}_{guide.to_ref}".replace(
-            "/", "-"
-        ).replace("@", "_")
+        # 브랜치명/폴더명 생성
+        # 서비스 repo 이름에서 'dworks-' prefix 제거하여 표준 폴더명으로 매핑
+        # (예: dworks-cstalk → cstalk, dworks-common-resource → common-resource)
+        repo_basename = guide.repo.split("/")[-1] if "/" in guide.repo else guide.repo
+        service_folder = (
+            repo_basename[len("dworks-"):]
+            if repo_basename.startswith("dworks-")
+            else repo_basename
+        )
+
+        def _safe(ref: str) -> str:
+            return ref.replace("/", "-").replace("@", "_")
+
+        def _format_refs(from_ref: str, to_ref: str) -> str:
+            """폴더용 ref pair 문자열을 만든다.
+
+            date 모드(`{branch}@YYYY-MM-DD`)에서 from/to의 브랜치가 같으면
+            브랜치명을 한 번만 두고 날짜는 `-`를 제거한 YYYYMMDD 형태로 합친다.
+            예) develop@2026-01-15 + develop@2026-01-30
+                → develop_20260115_20260130
+            그 외 (tag 모드 등) 기존 방식: {from}_{to}
+            """
+            if "@" in from_ref and "@" in to_ref:
+                from_branch, from_date = from_ref.split("@", 1)
+                to_branch, to_date = to_ref.split("@", 1)
+                if from_branch == to_branch:
+                    return (
+                        f"{_safe(from_branch)}"
+                        f"_{from_date.replace('-', '')}"
+                        f"_{to_date.replace('-', '')}"
+                    )
+            return f"{_safe(from_ref)}_{_safe(to_ref)}"
+
+        # 폴더 패턴: {service}_{ref-pair}
+        folder_path = f"{service_folder}_{_format_refs(guide.from_ref, guide.to_ref)}"
+        branch_name = f"patch-guide/{folder_path}"
 
         # 기본 브랜치에서 새 브랜치 생성
         default_branch = repo.default_branch

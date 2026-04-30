@@ -98,6 +98,12 @@ class AnalysisResult:
     oracle_dml: str = ""
     es_commands: str = ""
     curl_script: str = ""
+    # 컨테이너별 curl 스크립트 (key: 컨테이너명, value: bash 본문)
+    # 비어 있으면 generator는 curl_script로 fallback
+    curl_scripts: dict[str, str] = field(default_factory=dict)
+    # yml 변경분 발췌 (key: 파일명 또는 상대경로, value: 발췌 yml 본문)
+    # generator가 repo_type에 따라 config/talk 또는 config/registry 하위로 라우팅
+    config_yml_files: dict[str, str] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
 

@@ -14,6 +14,12 @@ SYSTEM_PROMPT = """\
 3. 변경 내용(필드 추가/삭제/값 변경)을 명확히 설명합니다.
 4. curl 명령어를 생성할 때 ActionURI, ActionType, Header 정보를 활용합니다.
 5. 실행 순서가 중요하면 순서를 명시합니다.
+6. **컨테이너별 분리**: ActionURI의 첫 경로 세그먼트를 컨테이너명으로 사용합니다.
+   예) `/scheduler/rest/...` → `scheduler`, `/cstalk/api/...` → `cstalk`,
+       `/bff/...` → `bff`, `/uaa/...` → `uaa`, `/depot/...` → `depot`.
+   각 컨테이너에 해당하는 curl 호출은 별도의 bash 코드 블록에 모으고,
+   블록 직전에 `### container: {컨테이너명}` 형식의 헤더를 반드시 작성합니다.
+   컨테이너를 추론할 수 없으면 `### container: init-data`로 묶습니다.
 """
 
 USER_PROMPT_TEMPLATE = """\
@@ -34,12 +40,25 @@ USER_PROMPT_TEMPLATE = """\
 (파일별 변경 내용 설명)
 
 ## curl 스크립트
+컨테이너별로 별도의 bash 블록을 작성합니다. 각 블록 앞에 `### container: {컨테이너명}` 헤더를 붙입니다.
+
+### container: scheduler
 ```bash
 #!/bin/bash
 # 패치가이드: {repo} {from_ref} → {to_ref}
-(변경된 데이터에 대응하는 curl 명령어)
-(Header가 있으면 -H 옵션 포함)
+# scheduler 컨테이너 호출
+(scheduler 컨테이너 대상 curl 명령어)
 ```
+
+### container: cstalk
+```bash
+#!/bin/bash
+# 패치가이드: {repo} {from_ref} → {to_ref}
+# cstalk 컨테이너 호출
+(cstalk 컨테이너 대상 curl 명령어)
+```
+
+(추출된 컨테이너가 더 있으면 같은 형식으로 추가)
 
 ## 실행 시점
 (배포 전/후 여부와 이유)

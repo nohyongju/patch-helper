@@ -22,6 +22,9 @@ SERVICE_PATTERNS: list[tuple[str, FileCategory]] = [
     ("*init*", FileCategory.INIT_DATA),
     ("*seed*", FileCategory.INIT_DATA),
     ("*data.sql", FileCategory.INIT_DATA),
+    # 서비스 repo 내부의 yml (Spring Boot 설정 등) → 설정 변경으로 분류
+    ("*.yml", FileCategory.CONFIG_CHANGE),
+    ("*.yaml", FileCategory.CONFIG_CHANGE),
 ]
 
 # 설정 repo 분류 규칙

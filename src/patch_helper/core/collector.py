@@ -25,6 +25,8 @@ CLASSIFY_TARGET_PATTERNS: list[str] = [
     "*init*",
     "*seed*",
     "*data.sql",
+    "*.yml",
+    "*.yaml",
     # CONFIG repo
     "registry-config/*.yml",
     "registry-config/**/*.yml",

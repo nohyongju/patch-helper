@@ -193,9 +193,12 @@ class Analyzer:
         )
         content = self._call_openai(sys_prompt, user_prompt)
 
+        config_yml_files = self._extract_yml_by_file(content)
+
         return AnalysisResult(
             category="설정 변경",
             content=content,
+            config_yml_files=config_yml_files,
         )
 
     def _analyze_init_data(
@@ -228,12 +231,15 @@ class Analyzer:
         )
         content = self._call_openai(sys_prompt, user_prompt)
 
-        curl_script = self._extract_bash_block(content)
+        curl_scripts = self._extract_curl_by_container(content)
+        # 컨테이너 분리에 실패하면 단일 bash 블록으로 fallback
+        curl_script = "" if curl_scripts else self._extract_bash_block(content)
 
         return AnalysisResult(
             category="초기 데이터",
             content=content,
             curl_script=curl_script,
+            curl_scripts=curl_scripts,
         )
 
     def _summarize(
@@ -270,3 +276,50 @@ class Analyzer:
         pattern = r"```bash\s*\n(.*?)```"
         match = re.search(pattern, content, re.DOTALL)
         return match.group(1).strip() if match else ""
+
+    def _extract_yml_by_file(self, content: str) -> dict[str, str]:
+        """`### file: {파일명}` 헤더 직후의 yml 코드 블록을 파일별로 추출한다.
+
+        같은 파일이 여러 번 나타나면 본문을 줄바꿈으로 누적 결합한다.
+        """
+        pattern = (
+            r"#{2,4}\s*file\s*:\s*([^\n`]+?\.ya?ml)"   # 헤더 (파일명 캡처)
+            r"\s*\n[\s\S]*?"                            # 헤더 ~ 코드블록 사이
+            r"```(?:ya?ml)?\s*\n([\s\S]*?)```"          # yml 코드블록 (본문 캡처)
+        )
+        matches = re.findall(pattern, content, re.IGNORECASE)
+        result: dict[str, str] = {}
+        for filename, body in matches:
+            # basename만 사용 (경로 prefix는 generator가 결정)
+            key = filename.strip().split("/")[-1].strip("`")
+            body = body.rstrip() + "\n"
+            if not body.strip():
+                continue
+            if key in result:
+                result[key] = result[key].rstrip() + "\n\n" + body
+            else:
+                result[key] = body
+        return result
+
+    def _extract_curl_by_container(self, content: str) -> dict[str, str]:
+        """`### container: {name}` 헤더 직후의 bash 블록을 컨테이너별로 추출한다.
+
+        같은 컨테이너가 여러 번 나타나면 본문을 줄바꿈으로 누적 결합한다.
+        """
+        pattern = (
+            r"#{2,4}\s*container\s*:\s*([A-Za-z0-9_\-]+)"  # 헤더 (이름 캡처)
+            r"\s*\n[\s\S]*?"                                # 헤더 ~ 코드블록 사이
+            r"```(?:bash|sh)?\s*\n([\s\S]*?)```"            # bash 코드블록 (본문 캡처)
+        )
+        matches = re.findall(pattern, content, re.IGNORECASE)
+        result: dict[str, str] = {}
+        for container, body in matches:
+            key = container.strip().lower()
+            body = body.strip()
+            if not body:
+                continue
+            if key in result:
+                result[key] = result[key] + "\n\n" + body
+            else:
+                result[key] = body
+        return result
