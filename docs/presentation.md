@@ -138,24 +138,30 @@ attic-btalk-release-guide/
 ## 산출물 예시 — patch-mysql.sql
 
 ```sql
--- DDL (배포 전)
 CREATE TABLE insight_group_talk_event_log (
-  c_event_log_id VARCHAR(36) NOT NULL COMMENT '이벤트 로그 아이디',
+  c_event_log_id VARCHAR(36)  NOT NULL COMMENT '이벤트 로그 아이디',
   c_tenant_id    VARCHAR(255) NOT NULL COMMENT '테넌트 ID',
-  c_center_id    VARCHAR(36) COMMENT '센터 아이디',
-  c_actor_user_id VARCHAR(80) COMMENT '행위 사용자 아이디',
   ...
 ) COMMENT='그룹톡 이벤트 로그';
 
 ALTER TABLE insight_group_talk_event_log
-  ADD CONSTRAINT pk_insight_group_talk_event_log
-  PRIMARY KEY (c_event_log_id, c_tenant_id);
+  ADD PRIMARY KEY (c_event_log_id, c_tenant_id);
 ```
 
-테이블, 필드명 컨벤션 기반
-JpoId 클래스를 함께 fetch하여 PK 컬럼을 빠뜨리지 않음
-신규 테이블의 코멘트 필수 포함
-인덱스 필수 포함
+---
+
+## DB 분석의 정확성 보장
+
+- **테이블·필드명 컨벤션 기반**
+  `*Jpo` → `{service}_*`, 컬럼은 `c_` 접두사
+- **JpoId 클래스 동시 fetch**
+  복합 PK 컬럼을 빠뜨리지 않음
+- **신규 테이블 COMMENT 필수 포함**
+  MySQL: 컬럼 COMMENT, Oracle: `COMMENT ON COLUMN ...`
+- **인덱스 필수 포함**
+  `@Index` / `@Table(indexes=...)` 어노테이션 해석
+
+→ AI에게 자연어 규칙으로 강제 (`prompts/db_analysis.py`)
 
 ---
 
@@ -251,7 +257,7 @@ SERVICE_REPOS=dworks-cstalk,dworks-bizasset,...,dworks-newservice
 - **AI 출력은 검증 필수**: PR 머지 전 사람이 한 번 더 검토
 - **"패치 대상 컨테이너" 표는 자동 생성 X**: 운영자가 PR에서 직접 채움
 - **token 비용**: 서비스당 (변경 Jpo 수 + 변경 Doc 수 + 설정/Init/초기데이터 각 1회 + 요약 1회)
-- **GitHub compare API 300 파일 제한**: tree 비교로 누락 보충 (`collector.py`)
+- **GitHub compare API 300 파일 제한**: 
 - **Jpo의 JpoId**: 변경 목록에 없어도 PK 추출 위해 head 시점 파일 자동 fetch
 
 ---
