@@ -48,6 +48,10 @@ REPO_TYPE_MAP: dict[str, RepoType] = {
     "dworks-common-initial": RepoType.INITIAL,
 }
 
+# CONFIG repo가 아닌 곳의 application.yml/yaml은 분석 제외
+# (공통 부트스트랩 설정이라 패치가이드 대상이 아니고, AI 환각의 주요 원인)
+NON_CONFIG_EXCLUDE_BASENAMES: set[str] = {"application.yml", "application.yaml"}
+
 
 def detect_repo_type(repo_name: str) -> RepoType:
     """repo 이름에서 타입을 추론한다."""
@@ -91,6 +95,15 @@ def classify(diff: DiffResult) -> ClassifiedChanges:
     )
 
     for file_change in diff.files:
+        basename = file_change.filename.split("/")[-1]
+        if (
+            repo_type != RepoType.CONFIG
+            and basename in NON_CONFIG_EXCLUDE_BASENAMES
+        ):
+            file_change.category = FileCategory.IGNORED
+            logger.info(f"  application.yml 제외: {file_change.filename}")
+            continue
+
         category = _match_file(file_change.filename, patterns)
         file_change.category = category
 
