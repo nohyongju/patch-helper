@@ -165,6 +165,7 @@ class Analyzer:
         # 파일별 개별 분석 후 결과 합산
         all_contents: list[str] = []
         all_es_commands: list[str] = []
+        es_curls_by_index: dict[str, str] = {}
 
         for change in modified_changes:
             logger.info(f"  ES 분석 중: {change.filename}")
@@ -175,9 +176,20 @@ class Analyzer:
 
             all_contents.append(content)
 
-            es_commands = self._extract_code_block(content)
-            if es_commands:
-                all_es_commands.append(es_commands)
+            curls = self._extract_es_by_index(content)
+            for index_name, body in curls.items():
+                if index_name in es_curls_by_index:
+                    es_curls_by_index[index_name] = (
+                        es_curls_by_index[index_name].rstrip() + "\n\n" + body
+                    )
+                else:
+                    es_curls_by_index[index_name] = body
+
+            # fallback: 인덱스 헤더 추출 실패 시 첫 코드블록을 통합 본문에 사용
+            if not curls:
+                fallback = self._extract_code_block(content)
+                if fallback:
+                    all_es_commands.append(fallback)
 
         combined_content = "\n\n---\n\n".join(all_contents)
 
@@ -185,6 +197,7 @@ class Analyzer:
             category="ES 변경",
             content=combined_content,
             es_commands="\n\n".join(all_es_commands),
+            es_curls_by_index=es_curls_by_index,
         )
 
     def _analyze_config(self, repo: str, changes: list[FileChange]) -> AnalysisResult:
@@ -297,6 +310,29 @@ class Analyzer:
                 continue
             if key in result:
                 result[key] = result[key].rstrip() + "\n\n" + body
+            else:
+                result[key] = body
+        return result
+
+    def _extract_es_by_index(self, content: str) -> dict[str, str]:
+        """`### index: {logical_name}` 헤더 직후의 bash 블록을 인덱스별로 추출한다.
+
+        같은 인덱스가 여러 번 나타나면 본문을 줄바꿈으로 누적 결합한다.
+        """
+        pattern = (
+            r"#{2,4}\s*index\s*:\s*([A-Za-z0-9_\-]+)"   # 헤더 (logical 이름 캡처)
+            r"\s*\n[\s\S]*?"                              # 헤더 ~ 코드블록 사이
+            r"```(?:bash|sh)?\s*\n([\s\S]*?)```"          # bash 코드블록 (본문 캡처)
+        )
+        matches = re.findall(pattern, content, re.IGNORECASE)
+        result: dict[str, str] = {}
+        for index_name, body in matches:
+            key = index_name.strip()
+            body = body.strip()
+            if not body:
+                continue
+            if key in result:
+                result[key] = result[key] + "\n\n" + body
             else:
                 result[key] = body
         return result

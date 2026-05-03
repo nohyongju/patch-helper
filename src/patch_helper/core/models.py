@@ -97,6 +97,9 @@ class AnalysisResult:
     mysql_dml: str = ""
     oracle_dml: str = ""
     es_commands: str = ""
+    # 인덱스별 ES 패치 curl 스크립트 (key: 인덱스 logical 이름, value: curl 본문)
+    # 비어 있으면 generator는 별도 ES 스크립트를 생성하지 않는다.
+    es_curls_by_index: dict[str, str] = field(default_factory=dict)
     curl_script: str = ""
     # 컨테이너별 curl 스크립트 (key: 컨테이너명, value: bash 본문)
     # 비어 있으면 generator는 curl_script로 fallback

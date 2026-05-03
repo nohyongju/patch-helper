@@ -80,7 +80,15 @@ class Generator:
             for filename, body in config_yml_files.items():
                 guide.files[f"{config_subdir}/{filename}"] = body
 
-        # 5. curl 스크립트 — 컨테이너별로 script/API/{container}.http.sh 생성
+        # 5. ES 변경 — 인덱스별로 script/Elasticsearch/patch_{index}.sh 생성
+        es_curls = self._collect_es_curls_by_index(guide.analyses)
+        for index_name, curl_body in es_curls.items():
+            guide.files[f"script/Elasticsearch/patch_{index_name}.sh"] = self._render(
+                "patch-es.sh.j2",
+                {**common_ctx, "index_name": index_name, "curl_body": curl_body},
+            )
+
+        # 6. curl 스크립트 — 컨테이너별로 script/API/{container}.http.sh 생성
         curl_by_container = self._collect_curl_by_container(guide.analyses)
         if curl_by_container:
             for container, body in curl_by_container.items():
@@ -124,6 +132,22 @@ class Generator:
                     merged[filename] = merged[filename].rstrip() + "\n\n" + body
                 else:
                     merged[filename] = body
+        return merged
+
+    def _collect_es_curls_by_index(
+        self, analyses: list[AnalysisResult]
+    ) -> dict[str, str]:
+        """모든 분석 결과의 es_curls_by_index를 인덱스별로 병합한다."""
+        merged: dict[str, str] = {}
+        for a in analyses:
+            curls = getattr(a, "es_curls_by_index", None) or {}
+            for index_name, body in curls.items():
+                if not body or not body.strip():
+                    continue
+                if index_name in merged:
+                    merged[index_name] = merged[index_name].rstrip() + "\n\n" + body
+                else:
+                    merged[index_name] = body
         return merged
 
     def _collect_curl_by_container(
